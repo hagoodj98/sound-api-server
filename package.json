@@ -8,7 +8,10 @@
     "lint": "eslint index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "python:venv": "python3 -m venv .venv",
+    "python:install": ". .venv/bin/activate && pip install -r python/requirements.txt",
+    "analyze:audio": ". .venv/bin/activate && python python/analyze_audio.py"
   },
   "author": "",
   "license": "ISC",
