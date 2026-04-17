@@ -1,0 +1,17 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AudioFiles {
+  id          Int       @id @default(autoincrement())
+  fileName    String    @db.VarChar(255)
+  storage_key String    @db.VarChar(255)
+  size        Int
+  mimeType    String    @db.VarChar(255)
+  createdAt   DateTime? @default(now()) @db.Timestamp(6)
+}
