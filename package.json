@@ -5,10 +5,13 @@
   "scripts": {
     "start": "tsx index.ts",
     "dev": "tsx watch index.ts",
-    "lint": "eslint index.ts",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
     "python:venv": "python3 -m venv .venv",
     "python:install": ". .venv/bin/activate && pip install -r python/requirements.txt",
     "analyze:audio": ". .venv/bin/activate && python python/analyze_audio.py"

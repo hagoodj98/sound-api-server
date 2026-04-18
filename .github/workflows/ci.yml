@@ -15,6 +15,22 @@ jobs:
   verify:
     name: Verify Sound API Server
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sound_dna
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sound_dna"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sound_dna?schema=public
     steps:
       - uses: actions/checkout@v4
 
@@ -27,10 +43,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Validate Prisma schema
+        run: npm run prisma:validate
+
+      - name: Apply Prisma migrations
+        run: npm run prisma:migrate:deploy
+
       - name: Lint
         run: npm run lint
 
       - name: Typecheck
         run: npm run typecheck
-      - name: Running tests
+
+      - name: Run tests
         run: npm run test

@@ -7,11 +7,30 @@ datasource db {
   provider = "postgresql"
 }
 
-model AudioFiles {
+model AudioFile {
   id          Int       @id @default(autoincrement())
   fileName    String    @db.VarChar(255)
-  storage_key String    @db.VarChar(255)
+  storageKey String    @db.VarChar(255)
   size        Int
   mimeType    String    @db.VarChar(255)
   createdAt   DateTime? @default(now()) @db.Timestamp(6)
+
+  soundProfile SoundProfile?
+}
+model SoundProfile {
+  id          Int       @id @default(autoincrement())
+  audioFileId Int       @unique
+  audioFile AudioFile @relation(fields: [audioFileId], references: [id])
+  durationSeconds Float
+  tempoBpm Float
+  estimatedPitchHz Float
+  rmsMean Float
+  spectralCentroidMean Float
+  spectralRolloffMean Float
+  spectralBandwidthMean Float
+  zeroCrossingRateMean Float
+  mfccMean Json
+  mfccStd Json
+  chromaMean Json
+  rawAnalysis Json
 }
