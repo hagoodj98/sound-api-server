@@ -135,3 +135,31 @@ describe("POST /api/submit-audio", () => {
     });
   });
 });
+
+describe("GET /api/get-audio", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns all audio file keys from cloud storage", async () => {
+    mocks.s3Send.mockResolvedValue({
+      Contents: [
+        { Key: "audio/2026-04-19T10:00:00.000Z-kick.wav" },
+        { Key: "audio/2026-04-19T10:01:00.000Z-snare.wav" },
+        {},
+      ],
+    });
+
+    const response = await request(app).get("/api/get-audio");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      message: "Audio files retrieved successfully!",
+      audioFiles: [
+        "audio/2026-04-19T10:00:00.000Z-kick.wav",
+        "audio/2026-04-19T10:01:00.000Z-snare.wav",
+      ],
+    });
+    expect(mocks.s3Send).toHaveBeenCalledTimes(1);
+  });
+});
