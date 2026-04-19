@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { s3Client } from "./lib/s3";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { ListObjectsCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { prisma } from "./lib/database";
 import { analyzeAudio } from "./pythonScript";
 
@@ -29,7 +29,8 @@ type AudioAnalysisResult = {
   estimatedPitchHz: number;
   dna: DNA;
 };
-
+const temptStorage = multer.memoryStorage(); // Use memory storage for multer to store uploaded files in memory
+const upload = multer({ storage: temptStorage }); // Create a multer instance with the memory storage configuration
 export const app = express();
 app.use(cors());
 app.use(express.json());
@@ -38,8 +39,7 @@ app.get("/", (req, res) => {
 
   res.send("Hello, Sound DNA API!");
 });
-const temptStorage = multer.memoryStorage(); // Use memory storage for multer to store uploaded files in memory
-const upload = multer({ storage: temptStorage }); // Create a multer instance with the memory storage configuration
+
 app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
   try {
     const audioFile = req.file; // Get the uploaded audio file from the request
@@ -75,6 +75,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     } finally {
       await fs.unlink(tempFilePath).catch(() => undefined);
     }
+    // After successfully uploading the audio file to Cloudflare R2, we can now store the metadata of the uploaded audio file in the database using Prisma. This includes information such as the original file name, MIME type, storage key, file size, and creation date.
     const audio = await prisma.audioFile.create({
       data: {
         fileName: audioFile.originalname, // Store the original name of the uploaded audio file in the database
@@ -84,6 +85,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
         createdAt: creationTime, // Store the creation date of the audio file in the database
       },
     });
+    // After successfully uploading the audio file to Cloudflare R2 and storing its metadata in the database, we can now create a sound profile in the database using the analysis results obtained from the Python script. The sound profile will include various attributes such as duration, tempo, estimated pitch, and DNA features extracted from the audio analysis.
     const soundProfile = await prisma.soundProfile.create({
       data: {
         audioFileId: audio.id,
@@ -108,5 +110,35 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Failed to upload audio file." }); // Respond with an error message if the upload fails
+  }
+});
+app.get("/api/get-audio", async (req, res) => {
+  try {
+    //fetch audio files from the cloudflare R2 bucket using the S3 client and return the list of audio files in the response
+    const storage = await s3Client.send(
+      // Create a ListObjectsCommand to list the objects in the specified bucket in Cloudflare R2
+      new ListObjectsCommand({
+        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME, // Use the Cloudflare R2 bucket name from environment variables
+      }),
+    );
+    // The ListObjectsCommand returns a list of objects in the specified bucket, which includes the audio files that have been uploaded to Cloudflare R2. We can then extract the keys of the audio files from the response and return them in the API response as needed.
+    const audioFiles = storage.Contents;
+    const audioFileList = [];
+    // Iterate through the list of audio files returned by the ListObjectsCommand and extract the keys of the audio files to be included in the response
+    for (const file of audioFiles || []) {
+      console.log("Audio file in R2 bucket:", file.Key); // Log the key of each audio file in the R2 bucket for debugging purposes
+      if (file.Key) {
+        audioFileList.push(file.Key); // Add the key of each audio file to the audioFileList array
+      }
+    }
+
+    // Here you can implement the logic to retrieve the list of audio files from Cloudflare R2 and return it in the response as needed
+    res.status(200).json({
+      message: "Audio files retrieved successfully!",
+      audioFiles: audioFileList,
+    }); // Respond with a success message
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to retrieve audio files." }); // Respond with an error message if retrieval fails
   }
 });
