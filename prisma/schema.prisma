@@ -10,7 +10,7 @@ datasource db {
 model AudioFile {
   id          Int       @id @default(autoincrement())
   fileName    String    @db.VarChar(255)
-  storageKey String    @db.VarChar(255)
+  storageKey String    @db.VarChar(255) @unique
   size        Int
   mimeType    String    @db.VarChar(255)
   createdAt   DateTime? @default(now()) @db.Timestamp(6)
