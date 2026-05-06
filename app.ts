@@ -29,14 +29,6 @@ type AudioAnalysisResult = {
   estimatedPitchHz: number;
   dna: DNA;
 };
-type SoundProfile = {
-  audioFileId: string;
-  audio?: string;
-  tempoBpm: number;
-  estimatedPitchHz: number;
-  energy?: number;
-};
-
 const temptStorage = multer.memoryStorage(); // Use memory storage for multer to store uploaded files in memory
 const upload = multer({ storage: temptStorage }); // Create a multer instance with the memory storage configuration
 export const app = express();
@@ -58,7 +50,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     const audioReferenceKey = `audio/${creationTime}-${audioFile.originalname}`; // Create a unique reference key for the audio file to be stored in Cloudflare R2
 
     // Upload the audio file to Cloudflare R2 using the S3 client
-    const uploadResult = await s3Client.send(
+    await s3Client.send(
       // Create a PutObjectCommand to upload the audio file to the specified bucket and key in Cloudflare R2
       new PutObjectCommand({
         Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME, // Use the Cloudflare R2 bucket name from environment variables
@@ -67,7 +59,6 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
         ContentType: audioFile.mimetype, // Set the content type of the S3 object to the MIME type of the uploaded audio file
       }),
     );
-    console.log(uploadResult, "uploaded");
 
     //once the file is uploaded to R2 and the metadata is stored in the database, you can implement any additional logic here, such as processing the audio file using the SOUND DNA API
     // For example, you can call the analyzeAudio function to analyze the uploaded audio file and get the results, which can then be stored in the database or returned in the response as needed.
@@ -132,35 +123,12 @@ app.get("/api/get-audio", async (req, res) => {
     );
     // The ListObjectsCommand returns a list of objects in the specified bucket, which includes the audio files that have been uploaded to Cloudflare R2. We can then extract the keys of the audio files from the response and return them in the API response as needed.
     const audioFiles = storage.Contents;
-    const audioFileList: SoundProfile[] = [];
+    const audioFileList = [];
     // Iterate through the list of audio files returned by the ListObjectsCommand and extract the keys of the audio files to be included in the response
     for (const file of audioFiles || []) {
       console.log("Audio file in R2 bucket:", file.Key); // Log the key of each audio file in the R2 bucket for debugging purposes
-      const soundProfile: SoundProfile = {
-        audioFileId: "",
-        tempoBpm: 0,
-        estimatedPitchHz: 0,
-        energy: 0,
-      };
       if (file.Key) {
-        console.log(file);
-        const audioFileRecord = await prisma.audioFile.findUnique({
-          where: {
-            storageKey: file.Key, // Use the storage key of the audio file to find its corresponding record in the database
-          },
-          include: {
-            soundProfile: true, // Include the associated sound profile data when retrieving the audio file record from the database
-          },
-        });
-        console.log(audioFileRecord);
-        if (audioFileRecord && audioFileRecord.soundProfile) {
-          soundProfile.audioFileId = audioFileRecord.id.toString();
-          soundProfile.tempoBpm = audioFileRecord.soundProfile.tempoBpm;
-          soundProfile.estimatedPitchHz =
-            audioFileRecord.soundProfile.estimatedPitchHz;
-          soundProfile.energy = audioFileRecord.soundProfile.rmsMean;
-        }
-        audioFileList.push(soundProfile); // Add the extracted sound profile data to the list of audio files to be returned in the response
+        audioFileList.push(file.Key); // Add the key of each audio file to the audioFileList array
       }
     }
 
