@@ -5,10 +5,19 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { s3Client } from "./lib/s3";
-import { ListObjectsCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  ListObjectsCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { prisma } from "./lib/database";
 import { analyzeAudio } from "./pythonScript";
-
+import {
+  getEnergyLevel,
+  getMoodLabel,
+  getTempoLabel,
+  getToneLabel,
+} from "./utils/helperSoundFunctions";
 // Define TypeScript types for the audio analysis results and sound profile data structure
 type DNA = {
   mfccMean: number[];
@@ -31,10 +40,14 @@ type AudioAnalysisResult = {
 };
 type SoundProfile = {
   audioFileId: string;
-  audio?: string;
   tempoBpm: number;
+  audioName: string;
   estimatedPitchHz: number;
   energy?: number;
+  energyLevel?: string;
+  tempoLabel?: string;
+  tone?: string;
+  mood?: string;
 };
 
 const temptStorage = multer.memoryStorage(); // Use memory storage for multer to store uploaded files in memory
@@ -55,7 +68,10 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
       return res.status(400).json({ message: "No audio file uploaded." }); // Respond with an error if no audio file was uploaded
     }
     const creationTime = new Date().toISOString(); // Get the current timestamp to create a unique reference key for the audio file
-    const audioReferenceKey = `audio/${creationTime}-${audioFile.originalname}`; // Create a unique reference key for the audio file to be stored in Cloudflare R2
+    const baseName = audioFile.originalname.endsWith(".m4a")
+      ? audioFile.originalname
+      : `${audioFile.originalname}.m4a`;
+    const audioReferenceKey = `audio/${creationTime}-${baseName}`; // Create a unique reference key for the audio file to be stored in Cloudflare R2
 
     // Upload the audio file to Cloudflare R2 using the S3 client
     const uploadResult = await s3Client.send(
@@ -94,6 +110,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
         createdAt: creationTime, // Store the creation date of the audio file in the database
       },
     });
+
     // After successfully uploading the audio file to Cloudflare R2 and storing its metadata in the database, we can now create a sound profile in the database using the analysis results obtained from the Python script. The sound profile will include various attributes such as duration, tempo, estimated pitch, and DNA features extracted from the audio analysis.
     const soundProfile = await prisma.soundProfile.create({
       data: {
@@ -124,42 +141,75 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
 app.get("/api/get-audio", async (req, res) => {
   try {
     //fetch audio files from the cloudflare R2 bucket using the S3 client and return the list of audio files in the response
-    const storage = await s3Client.send(
+    const list = await s3Client.send(
       // Create a ListObjectsCommand to list the objects in the specified bucket in Cloudflare R2
       new ListObjectsCommand({
         Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME, // Use the Cloudflare R2 bucket name from environment variables
       }),
     );
-    // The ListObjectsCommand returns a list of objects in the specified bucket, which includes the audio files that have been uploaded to Cloudflare R2. We can then extract the keys of the audio files from the response and return them in the API response as needed.
-    const audioFiles = storage.Contents;
+
     const audioFileList: SoundProfile[] = [];
+
     // Iterate through the list of audio files returned by the ListObjectsCommand and extract the keys of the audio files to be included in the response
-    for (const file of audioFiles || []) {
+    for (const file of list.Contents || []) {
+      if (!file.Key) {
+        continue;
+      }
+
       console.log("Audio file in R2 bucket:", file.Key); // Log the key of each audio file in the R2 bucket for debugging purposes
       const soundProfile: SoundProfile = {
         audioFileId: "",
         tempoBpm: 0,
         estimatedPitchHz: 0,
-        energy: 0,
+        audioName: "",
+        energyLevel: "",
+        tempoLabel: "",
+        tone: "",
+        mood: "",
       };
-      if (file.Key) {
-        console.log(file);
-        const audioFileRecord = await prisma.audioFile.findUnique({
-          where: {
-            storageKey: file.Key, // Use the storage key of the audio file to find its corresponding record in the database
-          },
-          include: {
-            soundProfile: true, // Include the associated sound profile data when retrieving the audio file record from the database
-          },
+
+      const audioFileRecord = await prisma.audioFile.findUnique({
+        where: {
+          storageKey: file.Key, // Use the storage key of the audio file to find its corresponding record in the database
+        },
+        include: {
+          soundProfile: true, // Include the associated sound profile data when retrieving the audio file record from the database
+        },
+      });
+      //clean the string by only getting the name between - and .m4a
+      //audio/2026-05-07T02:17:54.159Z-yessir.m4a
+      const fileName = file.Key?.split("/")
+        .pop()
+        ?.split("-")
+        .pop()
+        ?.split(".")
+        .shift();
+      if (fileName) {
+        soundProfile.audioName = fileName;
+      }
+      // Key: 'audio/2026-05-07T02:17:54.159Z-yessir.m4a',
+      console.log(file, "file");
+
+      if (audioFileRecord && audioFileRecord.soundProfile) {
+        const rmsMean = audioFileRecord.soundProfile.rmsMean;
+        const tempoBpm = Math.floor(audioFileRecord.soundProfile.tempoBpm);
+        const spectralCentroidMean =
+          audioFileRecord.soundProfile.spectralCentroidMean;
+
+        soundProfile.audioFileId = audioFileRecord.id.toString();
+        soundProfile.tempoBpm = tempoBpm;
+        soundProfile.audioName = fileName || "Unknown";
+        soundProfile.estimatedPitchHz =
+          audioFileRecord.soundProfile.estimatedPitchHz;
+        soundProfile.energyLevel = getEnergyLevel(rmsMean);
+        soundProfile.tempoLabel = getTempoLabel(tempoBpm);
+        soundProfile.tone = getToneLabel(spectralCentroidMean);
+        soundProfile.mood = getMoodLabel({
+          tempoBpm,
+          rmsMean,
+          spectralCentroidMean,
         });
-        console.log(audioFileRecord);
-        if (audioFileRecord && audioFileRecord.soundProfile) {
-          soundProfile.audioFileId = audioFileRecord.id.toString();
-          soundProfile.tempoBpm = audioFileRecord.soundProfile.tempoBpm;
-          soundProfile.estimatedPitchHz =
-            audioFileRecord.soundProfile.estimatedPitchHz;
-          soundProfile.energy = audioFileRecord.soundProfile.rmsMean;
-        }
+        // Construct the URL for streaming the audio file using the API endpoint and the audio file's unique ID from the database
         audioFileList.push(soundProfile); // Add the extracted sound profile data to the list of audio files to be returned in the response
       }
     }
@@ -172,5 +222,54 @@ app.get("/api/get-audio", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Failed to retrieve audio files." }); // Respond with an error message if retrieval fails
+  }
+});
+
+app.get("/api/stream-audio/:audioFileId", async (req, res) => {
+  try {
+    console.log("here");
+
+    const audioFileId = Number(req.params.audioFileId);
+    if (Number.isNaN(audioFileId)) {
+      return res.status(400).json({ message: "Invalid audio file id." });
+    }
+
+    const audioFileRecord = await prisma.audioFile.findUnique({
+      where: { id: audioFileId },
+    });
+
+    if (!audioFileRecord) {
+      return res.status(404).json({ message: "Audio file not found." });
+    }
+
+    const audioObject = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME,
+        Key: audioFileRecord.storageKey,
+      }),
+    );
+
+    if (!audioObject.Body) {
+      return res.status(404).json({ message: "Audio object is empty." });
+    }
+
+    if (audioObject.ContentType || audioFileRecord.mimeType) {
+      res.setHeader(
+        "Content-Type",
+        audioObject.ContentType || audioFileRecord.mimeType,
+      );
+    }
+    if (audioObject.ContentLength) {
+      res.setHeader("Content-Length", audioObject.ContentLength.toString());
+    }
+    if (audioObject.ETag) {
+      res.setHeader("ETag", audioObject.ETag);
+    }
+    res.setHeader("Accept-Ranges", "bytes");
+    // Stream the audio file from Cloudflare R2 to the client using the response object
+    (audioObject.Body as NodeJS.ReadableStream).pipe(res);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Failed to stream audio file." });
   }
 });
