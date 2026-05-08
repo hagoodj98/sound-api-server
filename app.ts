@@ -53,8 +53,6 @@ type SoundProfile = {
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 
-const TEMPO_BPM_MIN = 40;
-const TEMPO_BPM_MAX = 180;
 const PITCH_SHIFT_SEMITONES_MIN = -12;
 const PITCH_SHIFT_SEMITONES_MAX = 12;
 const gainDbMin = -12;
@@ -350,16 +348,10 @@ app.post(
           "Audio conversion complete. DSP effects applied and file processed.",
         convertedAudioUri,
         conversionPlan: {
-          tempoRatio,
           targetBPM: targetBPM,
+          importedTempoBpm: importedTempo,
           pitchShiftSemitones,
           gainDb,
-          minTempoBpm: TEMPO_BPM_MIN,
-          maxTempoBpm: TEMPO_BPM_MAX,
-          minPitchShiftSemitones: PITCH_SHIFT_SEMITONES_MIN,
-          maxPitchShiftSemitones: PITCH_SHIFT_SEMITONES_MAX,
-          minGainDb: gainDbMin,
-          maxGainDb: gainDbMax,
         },
       });
     } catch (error) {
@@ -417,8 +409,6 @@ app.get("/api/stream-audio/:audioFileId", async (req, res) => {
 
 app.get("/api/stream-temp-audio/:filename", async (req, res) => {
   try {
-    console.log("in filename route");
-
     const filename = req.params.filename;
     // Validate filename to prevent path traversal attacks
     if (!filename || filename.includes("..") || filename.includes("/")) {
@@ -463,3 +453,106 @@ app.get("/api/stream-temp-audio/:filename", async (req, res) => {
       .json({ message: "Failed to stream temporary audio file." });
   }
 });
+
+app.post(
+  "/api/reconvert-audio/:audioFileId",
+  upload.single("audio"),
+  async (req, res) => {
+    try {
+      const audioFileId = Number(req.params.audioFileId);
+      if (Number.isNaN(audioFileId)) {
+        return res.status(400).json({ message: "Invalid audio file id." });
+      }
+
+      const audioFile = req.file;
+      if (!audioFile) {
+        return res.status(400).json({ message: "No audio file uploaded." });
+      }
+
+      const targetBPM = Number(req.query.targetBPM);
+      console.log(targetBPM);
+
+      const requestedPitchShiftSemitones = Number(
+        req.query.pitchShiftSemitones,
+      );
+      const requestedGainDb = Number(req.query.gainDb);
+      // Optional: if the client already knows the imported tempo, skip re-analysis entirely
+      const providedImportedTempoBpm =
+        req.query.importedTempoBpm !== undefined
+          ? Number(req.query.importedTempoBpm)
+          : null;
+
+      if (
+        Number.isNaN(targetBPM) ||
+        Number.isNaN(requestedPitchShiftSemitones) ||
+        Number.isNaN(requestedGainDb)
+      ) {
+        return res.status(400).json({
+          message:
+            "Missing or invalid reconversion parameters. Expected targetBPM, pitchShiftSemitones, gainDb.",
+        });
+      }
+      // Create a temporary file path for the uploaded audio file
+      const importedTempPath = path.join(
+        os.tmpdir(),
+        `${new Date().toISOString()}-${audioFile.originalname}`,
+      );
+      await fs.writeFile(importedTempPath, audioFile.buffer);
+
+      // Skip re-analysis if the client already supplied the imported tempo — saves ~10-30s of librosa processing
+      let importedTempo: number;
+      if (
+        providedImportedTempoBpm !== null &&
+        !Number.isNaN(providedImportedTempoBpm)
+      ) {
+        importedTempo = providedImportedTempoBpm;
+      } else {
+        const importedAnalysis = await analyzeAudio(importedTempPath);
+        importedTempo = safeNumber(importedAnalysis?.tempoBpm, 120);
+      }
+
+      const tempoRatio = clamp(
+        targetBPM / Math.max(importedTempo, 1e-9),
+        0.75,
+        1.25,
+      );
+      const pitchShiftSemitones = clamp(
+        requestedPitchShiftSemitones,
+        PITCH_SHIFT_SEMITONES_MIN,
+        PITCH_SHIFT_SEMITONES_MAX,
+      );
+      const gainDb = clamp(requestedGainDb, gainDbMin, gainDbMax);
+
+      const conversionTimestamp = new Date().toISOString();
+      const convertedTempFileName = `reconverted-${conversionTimestamp}.wav`;
+      const convertedTempPath = path.join(os.tmpdir(), convertedTempFileName);
+
+      await convertAudio(
+        importedTempPath,
+        convertedTempPath,
+        tempoRatio,
+        pitchShiftSemitones,
+        gainDb,
+      );
+
+      try {
+        await fs.unlink(importedTempPath).catch(() => undefined);
+      } catch (cleanupError) {
+        console.error("Reconversion cleanup error:", cleanupError);
+      }
+
+      return res.status(200).json({
+        message: "Audio re-conversion complete.",
+        convertedAudioUri: `/api/stream-temp-audio/${convertedTempFileName}`,
+        conversionPlan: {
+          targetBPM,
+          pitchShiftSemitones,
+          gainDb,
+        },
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: "Failed to reconvert audio file." });
+    }
+  },
+);
