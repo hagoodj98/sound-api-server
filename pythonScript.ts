@@ -28,3 +28,40 @@ export async function analyzeAudio(filePath: string) {
 
   return JSON.parse(stdout); // Assuming the Python script returns JSON output
 }
+
+// This function runs the convert_audio.py Python script to apply DSP effects (time-stretch, pitch-shift, gain)
+export async function convertAudio(
+  inputFilePath: string,
+  outputFilePath: string,
+  tempoRatio: number,
+  pitchShiftSemitones: number,
+  gainDb: number,
+) {
+  if (!inputFilePath || !outputFilePath) {
+    throw new Error("convertAudio requires valid input and output file paths");
+  }
+
+  // Determine the path to the Python executable based on the operating system
+  const pythonBin =
+    process.platform === "win32"
+      ? path.join(process.cwd(), ".venv", "Scripts", "python.exe")
+      : path.join(process.cwd(), ".venv", "bin", "python");
+  // Construct the path to the convert_audio.py script located in the python directory of the project
+  const scriptPath = path.join(process.cwd(), "python", "convert_audio.py");
+  // Execute the Python script with the audio file paths and conversion parameters
+  //stdout stands for standard output (the normal output of the script), while stderr stands for standard error (where error messages and warnings are sent). Even if the conversion is successful, some Python libraries may output warnings to stderr, which is why we check and log it separately.
+  const { stdout, stderr } = await execFileAsync(pythonBin, [
+    scriptPath,
+    inputFilePath,
+    outputFilePath,
+    tempoRatio.toString(),
+    pitchShiftSemitones.toString(),
+    gainDb.toString(),
+  ]);
+  // Warnings from Python libraries can appear on stderr even when the conversion succeeds.
+  if (stderr) {
+    console.warn("Python conversion warning:", stderr);
+  }
+
+  return JSON.parse(stdout); // Assuming the Python script returns JSON output
+}
