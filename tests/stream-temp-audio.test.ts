@@ -101,9 +101,7 @@ describe("GET /api/stream-temp-audio/:filename", () => {
   });
 
   it("calls createReadStream with the correct temp file path", async () => {
-    await request(app).get(
-      "/api/stream-temp-audio/converted-2026-01-01.wav",
-    );
+    await request(app).get("/api/stream-temp-audio/converted-2026-01-01.wav");
 
     expect(mocks.createReadStream).toHaveBeenCalledTimes(1);
     const [calledPath] = mocks.createReadStream.mock.calls[0];

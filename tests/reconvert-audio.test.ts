@@ -164,6 +164,8 @@ describe("POST /api/reconvert-audio/:audioFileId", () => {
     );
 
     expect(response.status).toBe(500);
-    expect(response.body).toEqual({ message: "Failed to reconvert audio file." });
+    expect(response.body).toEqual({
+      message: "Failed to reconvert audio file.",
+    });
   });
 });
