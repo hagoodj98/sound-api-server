@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   analyzeAudio: vi.fn(),
   audioFileCreate: vi.fn(),
   soundProfileCreate: vi.fn(),
+  audioFileFindUnique: vi.fn(),
   s3Send: vi.fn(),
   unlink: vi.fn(),
   writeFile: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("../lib/database", () => ({
   prisma: {
     audioFile: {
       create: mocks.audioFileCreate,
+      findUnique: mocks.audioFileFindUnique,
     },
     soundProfile: {
       create: mocks.soundProfileCreate,
@@ -149,17 +151,30 @@ describe("GET /api/get-audio", () => {
         {},
       ],
     });
+    mocks.audioFileFindUnique.mockResolvedValue({
+      id: 1,
+      soundProfile: {
+        tempoBpm: 120,
+        estimatedPitchHz: 440,
+        rmsMean: 0.2,
+        spectralCentroidMean: 1000,
+        spectralRolloffMean: 2000,
+        spectralBandwidthMean: 300,
+        zeroCrossingRateMean: 0.05,
+      },
+    });
 
     const response = await request(app).get("/api/get-audio");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      message: "Audio files retrieved successfully!",
-      audioFiles: [
-        "audio/2026-04-19T10:00:00.000Z-kick.wav",
-        "audio/2026-04-19T10:01:00.000Z-snare.wav",
-      ],
+    expect(response.body.message).toBe("Audio files retrieved successfully!");
+    expect(response.body.audioFiles).toHaveLength(2);
+    expect(response.body.audioFiles[0]).toMatchObject({
+      audioFileId: "1",
+      tempoBpm: 120,
+      audioName: expect.any(String),
     });
     expect(mocks.s3Send).toHaveBeenCalledTimes(1);
+    expect(mocks.audioFileFindUnique).toHaveBeenCalledTimes(2);
   });
 });
