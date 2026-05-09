@@ -17,14 +17,10 @@ export async function analyzeAudio(filePath: string) {
   // Construct the path to the analyze_audio.py script located in the python directory of the project
   const scriptPath = path.join(process.cwd(), "python", "analyze_audio.py"); // Execute the Python script with the audio file path as an argument and capture the standard output and error
   // The Python script is expected to perform audio analysis and return the results in JSON format through standard output
-  const { stdout, stderr } = await execFileAsync(pythonBin, [
+  const { stdout } = await execFileAsync(pythonBin, [
     scriptPath,
     filePath,
   ]);
-  // Warnings from Python libraries can appear on stderr even when the analysis succeeds.
-  if (stderr) {
-    console.warn("Python analysis warning:", stderr);
-  }
 
   return JSON.parse(stdout); // Assuming the Python script returns JSON output
 }
@@ -50,7 +46,7 @@ export async function convertAudio(
   const scriptPath = path.join(process.cwd(), "python", "convert_audio.py");
   // Execute the Python script with the audio file paths and conversion parameters
   //stdout stands for standard output (the normal output of the script), while stderr stands for standard error (where error messages and warnings are sent). Even if the conversion is successful, some Python libraries may output warnings to stderr, which is why we check and log it separately.
-  const { stdout, stderr } = await execFileAsync(pythonBin, [
+  const { stdout } = await execFileAsync(pythonBin, [
     scriptPath,
     inputFilePath,
     outputFilePath,
@@ -58,10 +54,6 @@ export async function convertAudio(
     pitchShiftSemitones.toString(),
     gainDb.toString(),
   ]);
-  // Warnings from Python libraries can appear on stderr even when the conversion succeeds.
-  if (stderr) {
-    console.warn("Python conversion warning:", stderr);
-  }
 
   return JSON.parse(stdout); // Assuming the Python script returns JSON output
 }
