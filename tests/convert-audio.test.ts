@@ -122,6 +122,28 @@ describe("POST /api/convert-audio/:audioFileId", () => {
     });
   });
 
+  it("returns 413 when imported audio duration exceeds the limit", async () => {
+    mocks.analyzeAudio.mockResolvedValue({
+      ...FAKE_RAW_ANALYSIS,
+      fileName: "imported.m4a",
+      durationSeconds: 601,
+      tempoBpm: 100,
+      estimatedPitchHz: 440,
+      dna: { ...FAKE_RAW_ANALYSIS.dna, rmsMean: 0.2 },
+    });
+
+    const response = await request(app)
+      .post("/api/convert-audio/1")
+      .attach("audio", Buffer.from("fake audio"), {
+        contentType: "audio/m4a",
+        filename: "imported.m4a",
+      });
+
+    expect(response.status).toBe(413);
+    expect(response.body.message).toMatch(/too long|Maximum duration/i);
+    expect(mocks.convertAudio).not.toHaveBeenCalled();
+  });
+
   it("writes, analyzes, and converts the uploaded file", async () => {
     await request(app)
       .post("/api/convert-audio/1")

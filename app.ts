@@ -18,58 +18,27 @@ import {
   getTempoLabel,
   getToneLabel,
 } from "./utils/helperSoundFunctions";
-// Define TypeScript types for the audio analysis results and sound profile data structure
-type DNA = {
-  mfccMean: number[];
-  mfccStd: number[];
-  chromaMean: number[];
-  spectralCentroidMean: number;
-  spectralBandwidthMean: number;
-  spectralRolloffMean: number;
-  zeroCrossingRateMean: number;
-  rmsMean: number;
-};
-// Define the structure of the audio analysis results returned by the Python script
-type AudioAnalysisResult = {
-  fileName: string;
-  durationSeconds: number;
-  sampleRate: number;
-  tempoBpm: number;
-  estimatedPitchHz: number;
-  dna: DNA;
-};
-type SoundProfile = {
-  audioFileId: string;
-  tempoBpm: number;
-  audioName: string;
-  estimatedPitchHz: number;
-  energy?: number;
-  energyLevel?: string;
-  tempoLabel?: string;
-  tone?: string;
-  mood?: string;
-};
-
-const clamp = (value: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, value));
-
-const PITCH_SHIFT_SEMITONES_MIN = -12;
-const PITCH_SHIFT_SEMITONES_MAX = 12;
-const gainDbMin = -12;
-const gainDbMax = 12;
-
-const safeNumber = (value: unknown, fallback: number) => {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-};
+import {
+  validateImportedAudioAnalysisSchema,
+  validateImportedAudioFileSchema,
+} from "./utils/inputValidation";
+import type { AudioAnalysisResult, SoundProfile } from "./types/types";
+import {
+  buildAutoConversionPlan,
+  clamp,
+  GAIN_DB_MAX,
+  GAIN_DB_MIN,
+  PITCH_SHIFT_SEMITONES_MAX,
+  PITCH_SHIFT_SEMITONES_MIN,
+  safeNumber,
+} from "./utils/conversionMath";
 
 const temptStorage = multer.memoryStorage(); // Use memory storage for multer to store uploaded files in memory
 const upload = multer({ storage: temptStorage }); // Create a multer instance with the memory storage configuration
 export const app = express();
 app.use(cors());
 app.use(express.json());
-app.get("/", (req, res) => {
-  console.log(req.url);
-
+app.get("/", (_req, res) => {
   res.send("Hello, Sound DNA API!");
 });
 
@@ -86,7 +55,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     const audioReferenceKey = `audio/${creationTime}-${baseName}`; // Create a unique reference key for the audio file to be stored in Cloudflare R2
 
     // Upload the audio file to Cloudflare R2 using the S3 client
-    const uploadResult = await s3Client.send(
+    await s3Client.send(
       // Create a PutObjectCommand to upload the audio file to the specified bucket and key in Cloudflare R2
       new PutObjectCommand({
         Bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME, // Use the Cloudflare R2 bucket name from environment variables
@@ -95,8 +64,6 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
         ContentType: audioFile.mimetype, // Set the content type of the S3 object to the MIME type of the uploaded audio file
       }),
     );
-    console.log(uploadResult, "uploaded");
-
     //once the file is uploaded to R2 and the metadata is stored in the database, you can implement any additional logic here, such as processing the audio file using the SOUND DNA API
     // For example, you can call the analyzeAudio function to analyze the uploaded audio file and get the results, which can then be stored in the database or returned in the response as needed.
     const tempFilePath = path.join(
@@ -108,7 +75,6 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     let analysisResults: AudioAnalysisResult;
     try {
       analysisResults = await analyzeAudio(tempFilePath); // Analyze the uploaded audio file using the analyzeAudio function and get the results
-      console.log("Audio analysis results:", analysisResults); // Log the analysis results for debugging purposes
     } finally {
       await fs.unlink(tempFilePath).catch(() => undefined);
     }
@@ -124,7 +90,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     });
 
     // After successfully uploading the audio file to Cloudflare R2 and storing its metadata in the database, we can now create a sound profile in the database using the analysis results obtained from the Python script. The sound profile will include various attributes such as duration, tempo, estimated pitch, and DNA features extracted from the audio analysis.
-    const soundProfile = await prisma.soundProfile.create({
+    await prisma.soundProfile.create({
       data: {
         audioFileId: audio.id,
         durationSeconds: analysisResults.durationSeconds,
@@ -142,7 +108,6 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
       },
     });
 
-    console.log("Sound profile created in database:", soundProfile); // Log the created sound profile for debugging purposes
     // Here you can implement the logic to process the submitted audio URI as needed
     res.status(200).json({ message: "Audio submitted successfully!" }); // Respond with a success message
   } catch (error) {
@@ -168,7 +133,6 @@ app.get("/api/get-audio", async (req, res) => {
         continue;
       }
 
-      console.log("Audio file in R2 bucket:", file.Key); // Log the key of each audio file in the R2 bucket for debugging purposes
       const soundProfile: SoundProfile = {
         audioFileId: "",
         tempoBpm: 0,
@@ -200,8 +164,6 @@ app.get("/api/get-audio", async (req, res) => {
         soundProfile.audioName = fileName;
       }
       // Key: 'audio/2026-05-07T02:17:54.159Z-yessir.m4a',
-      console.log(file, "file");
-
       if (audioFileRecord && audioFileRecord.soundProfile) {
         const rmsMean = audioFileRecord.soundProfile.rmsMean;
         const tempoBpm = Math.floor(audioFileRecord.soundProfile.tempoBpm);
@@ -242,11 +204,18 @@ app.post(
   async (req, res) => {
     try {
       const audioFileId = Number(req.params.audioFileId); // Get the audio file ID from the request parameters
-      console.log(audioFileId);
 
       const audioFile = req.file; // Get the uploaded audio file from the request
       if (!audioFile) {
         return res.status(400).json({ message: "No audio file uploaded." }); // Respond with an error if no audio file was uploaded
+      }
+
+      const importedFileValidation =
+        validateImportedAudioFileSchema.safeParse(audioFile);
+      if (!importedFileValidation.success) {
+        return res.status(400).json({
+          message: importedFileValidation.error.issues[0]?.message,
+        });
       }
       const profile = await prisma.soundProfile.findUnique({
         where: {
@@ -265,39 +234,24 @@ app.post(
       await fs.writeFile(importedTempPath, audioFile.buffer);
 
       const importedAnalysis = await analyzeAudio(importedTempPath);
+      const importedAnalysisValidation =
+        validateImportedAudioAnalysisSchema.safeParse(importedAnalysis);
+      if (!importedAnalysisValidation.success) {
+        await fs.unlink(importedTempPath).catch(() => undefined);
+        return res.status(413).json({
+          message: importedAnalysisValidation.error.issues[0]?.message,
+        });
+      }
 
       const profileAnalysis =
         profile.rawAnalysis as unknown as AudioAnalysisResult;
-      const profileTempo = safeNumber(profileAnalysis?.tempoBpm, 120);
-      const importedTempo = safeNumber(importedAnalysis?.tempoBpm, 120);
-      const profilePitch = safeNumber(
-        profileAnalysis?.estimatedPitchHz,
-        importedAnalysis?.estimatedPitchHz || 440,
-      );
-      const importedPitch = safeNumber(importedAnalysis?.estimatedPitchHz, 440);
-      const profileRms = safeNumber(profileAnalysis?.dna?.rmsMean, 0.1);
-      const importedRms = safeNumber(importedAnalysis?.dna?.rmsMean, 0.1);
-
-      // Calculate the conversion settings (tempo ratio, pitch shift in semitones, and gain in decibels) based on the profile's sound characteristics and the imported audio's sound characteristics, while applying clamping to ensure the values are within reasonable bounds for audio processing
-      const tempoRatio = clamp(
-        profileTempo / Math.max(importedTempo, 1e-9),
-        0.75,
-        1.25,
-      );
-      const targetBPM = profileTempo;
-      // The pitch shift in semitones is calculated using the logarithmic relationship between frequency and musical pitch, where a doubling of frequency corresponds to an increase of 12 semitones (one octave). The gain in decibels is calculated using the logarithmic relationship between amplitude and perceived loudness, where a doubling of amplitude corresponds to an increase of 6 decibels. Clamping is applied to both values to prevent extreme changes that could result in unnatural-sounding audio.
-      const pitchShiftSemitones = clamp(
-        12 * Math.log2(profilePitch / Math.max(importedPitch, 1e-9)),
-        -6,
-        6,
-      );
-
-      // The gain in decibels is calculated based on the ratio of the RMS (root mean square) values of the profile and imported audio, which represent the average power of the audio signals. The logarithmic relationship between amplitude and perceived loudness is used to convert this ratio into decibels, and clamping is applied to prevent extreme gain adjustments that could result in distortion or unnatural-sounding audio.
-      const gainDb = clamp(
-        20 * Math.log10(profileRms / Math.max(importedRms, 1e-9)),
-        -12,
-        12,
-      );
+      const {
+        targetBPM,
+        importedTempo,
+        tempoRatio,
+        pitchShiftSemitones,
+        gainDb,
+      } = buildAutoConversionPlan(profileAnalysis, importedAnalysis);
 
       // Create temporary file paths for audio conversion
       const conversionTimestamp = new Date().toISOString();
@@ -327,8 +281,6 @@ app.post(
         // Don't save to R2 or database - just keep in temp and stream from there
         // Return a temp stream URI so user can preview before exporting
         convertedAudioUri = `/api/stream-temp-audio/${convertedTempFileName}`;
-
-        console.log("Converted audio ready for streaming:", convertedAudioUri);
       } catch (uploadError) {
         console.error("Failed to prepare converted audio:", uploadError);
         // Clean up temp file but continue with response (provide partial result)
@@ -469,8 +421,15 @@ app.post(
         return res.status(400).json({ message: "No audio file uploaded." });
       }
 
+      const importedFileValidation =
+        validateImportedAudioFileSchema.safeParse(audioFile);
+      if (!importedFileValidation.success) {
+        return res.status(400).json({
+          message: importedFileValidation.error.issues[0]?.message,
+        });
+      }
+
       const targetBPM = Number(req.query.targetBPM);
-      console.log(targetBPM);
 
       const requestedPitchShiftSemitones = Number(
         req.query.pitchShiftSemitones,
@@ -499,17 +458,23 @@ app.post(
       );
       await fs.writeFile(importedTempPath, audioFile.buffer);
 
-      // Skip re-analysis if the client already supplied the imported tempo — saves ~10-30s of librosa processing
-      let importedTempo: number;
-      if (
+      // Validate imported duration before conversion so very long tracks are rejected early.
+      const importedAnalysis = await analyzeAudio(importedTempPath);
+      const importedAnalysisValidation =
+        validateImportedAudioAnalysisSchema.safeParse(importedAnalysis);
+      if (!importedAnalysisValidation.success) {
+        await fs.unlink(importedTempPath).catch(() => undefined);
+        return res.status(413).json({
+          message: importedAnalysisValidation.error.issues[0]?.message,
+        });
+      }
+
+      // Skip imported tempo analysis fallback when provided by client, but keep duration validation above.
+      const importedTempo =
         providedImportedTempoBpm !== null &&
         !Number.isNaN(providedImportedTempoBpm)
-      ) {
-        importedTempo = providedImportedTempoBpm;
-      } else {
-        const importedAnalysis = await analyzeAudio(importedTempPath);
-        importedTempo = safeNumber(importedAnalysis?.tempoBpm, 120);
-      }
+          ? providedImportedTempoBpm
+          : safeNumber(importedAnalysis?.tempoBpm, 120);
 
       const tempoRatio = clamp(
         targetBPM / Math.max(importedTempo, 1e-9),
@@ -521,7 +486,7 @@ app.post(
         PITCH_SHIFT_SEMITONES_MIN,
         PITCH_SHIFT_SEMITONES_MAX,
       );
-      const gainDb = clamp(requestedGainDb, gainDbMin, gainDbMax);
+      const gainDb = clamp(requestedGainDb, GAIN_DB_MIN, GAIN_DB_MAX);
 
       const conversionTimestamp = new Date().toISOString();
       const convertedTempFileName = `reconverted-${conversionTimestamp}.wav`;
