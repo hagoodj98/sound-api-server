@@ -17,10 +17,7 @@ export async function analyzeAudio(filePath: string) {
   // Construct the path to the analyze_audio.py script located in the python directory of the project
   const scriptPath = path.join(process.cwd(), "python", "analyze_audio.py"); // Execute the Python script with the audio file path as an argument and capture the standard output and error
   // The Python script is expected to perform audio analysis and return the results in JSON format through standard output
-  const { stdout } = await execFileAsync(pythonBin, [
-    scriptPath,
-    filePath,
-  ]);
+  const { stdout } = await execFileAsync(pythonBin, [scriptPath, filePath]);
 
   return JSON.parse(stdout); // Assuming the Python script returns JSON output
 }
