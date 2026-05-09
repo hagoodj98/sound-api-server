@@ -38,3 +38,21 @@ export const validateImportedAudioAnalysisSchema = z.object({
     }),
   tempoBpm: z.number(),
 });
+
+export const validateImportedAudioTempoSchema = z.object({
+  tempoBpm: z.number(),
+});
+
+export const validateAudioFileIdParamSchema = z.object({
+  audioFileId: z.coerce
+    .number()
+    .int()
+    .positive({ message: "Invalid audio file id." }),
+});
+
+export const validateReconversionQuerySchema = z.object({
+  targetBPM: z.coerce.number().finite(),
+  pitchShiftSemitones: z.coerce.number().finite(),
+  gainDb: z.coerce.number().finite(),
+  importedTempoBpm: z.coerce.number().finite().optional(),
+});
