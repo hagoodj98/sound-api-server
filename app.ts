@@ -17,6 +17,7 @@ import {
   getMoodLabel,
   getTempoLabel,
   getToneLabel,
+  safeDecodeFileName,
 } from "./utils/helperSoundFunctions";
 import {
   validateAudioFileIdParamSchema,
@@ -44,7 +45,7 @@ app.use(express.json());
 app.get("/", (req, res) => {
   console.log(req.url);
 
-  res.send("Hello, Sound DNA API!");
+  res.send("Hello, SonicDNA!");
 });
 
 app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
@@ -53,6 +54,9 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     if (!audioFile) {
       return res.status(400).json({ message: "No audio file uploaded." }); // Respond with an error if no audio file was uploaded
     }
+    // React Native FormData percent-encodes the multipart filename (e.g. spaces -> %20),
+    // so decode it before storing/using anywhere.
+    audioFile.originalname = safeDecodeFileName(audioFile.originalname);
     const creationTime = new Date().toISOString(); // Get the current timestamp to create a unique reference key for the audio file
     const baseName = audioFile.originalname.endsWith(".m4a")
       ? audioFile.originalname
@@ -71,7 +75,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     );
     console.log(uploadResult, "uploaded");
 
-    //once the file is uploaded to R2 and the metadata is stored in the database, you can implement any additional logic here, such as processing the audio file using the SOUND DNA API
+    //once the file is uploaded to R2 and the metadata is stored in the database, you can implement any additional logic here, such as processing the audio file using SonicDNA
     // For example, you can call the analyzeAudio function to analyze the uploaded audio file and get the results, which can then be stored in the database or returned in the response as needed.
     const tempFilePath = path.join(
       os.tmpdir(),
@@ -225,6 +229,8 @@ app.post(
       if (!audioFile) {
         return res.status(400).json({ message: "No audio file uploaded." }); // Respond with an error if no audio file was uploaded
       }
+      // React Native FormData percent-encodes the multipart filename — decode it.
+      audioFile.originalname = safeDecodeFileName(audioFile.originalname);
       const importedFileValidation =
         validateImportedAudioFileSchema.safeParse(audioFile);
       if (!importedFileValidation.success) {
@@ -437,6 +443,8 @@ app.post(
       if (!audioFile) {
         return res.status(400).json({ message: "No audio file uploaded." });
       }
+      // React Native FormData percent-encodes the multipart filename — decode it.
+      audioFile.originalname = safeDecodeFileName(audioFile.originalname);
 
       const importedFileValidation =
         validateImportedAudioFileSchema.safeParse(audioFile);

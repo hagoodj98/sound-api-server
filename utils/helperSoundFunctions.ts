@@ -61,4 +61,24 @@ const getMoodLabel = ({
   return "Focused";
 };
 
-export { getEnergyLevel, getTempoLabel, getToneLabel, getMoodLabel };
+/**
+ * React Native's FormData percent-encodes the multipart filename
+ * (e.g. "Test audio" -> "Test%20audio"), so multer reports it that way.
+ * Decode it before persisting / using in storage keys.
+ * Falls back to the raw value if it isn't valid percent-encoding.
+ */
+const safeDecodeFileName = (name: string): string => {
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+};
+
+export {
+  getEnergyLevel,
+  getTempoLabel,
+  getToneLabel,
+  getMoodLabel,
+  safeDecodeFileName,
+};
