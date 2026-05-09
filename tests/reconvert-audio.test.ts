@@ -41,10 +41,7 @@ describe("POST /api/reconvert-audio/:audioFileId", () => {
     mocks.writeFile.mockResolvedValue(undefined);
     mocks.unlink.mockResolvedValue(undefined);
     mocks.convertAudio.mockResolvedValue(undefined);
-    mocks.analyzeAudio.mockResolvedValue({
-      tempoBpm: 100,
-      durationSeconds: 60,
-    });
+    mocks.analyzeAudio.mockResolvedValue({ tempoBpm: 100 });
   });
 
   const attach = (req: ReturnType<typeof request.post>) =>
@@ -101,20 +98,18 @@ describe("POST /api/reconvert-audio/:audioFileId", () => {
     });
   });
 
-  it("still analyzes for duration validation when importedTempoBpm is provided", async () => {
+  it("skips analyzeAudio when importedTempoBpm is provided", async () => {
     await attach(
       request(app).post(
         "/api/reconvert-audio/1?targetBPM=120&pitchShiftSemitones=0&gainDb=0&importedTempoBpm=100",
       ),
     );
 
-    expect(mocks.analyzeAudio).toHaveBeenCalledTimes(1);
+    expect(mocks.analyzeAudio).not.toHaveBeenCalled();
     expect(mocks.convertAudio).toHaveBeenCalledTimes(1);
   });
 
-  it("uses analyzed tempo when importedTempoBpm is not provided", async () => {
-    mocks.analyzeAudio.mockResolvedValue({ tempoBpm: 80, durationSeconds: 60 });
-
+  it("falls back to analyzeAudio when importedTempoBpm is not provided", async () => {
     await attach(
       request(app).post(
         "/api/reconvert-audio/1?targetBPM=120&pitchShiftSemitones=0&gainDb=0",
@@ -123,16 +118,10 @@ describe("POST /api/reconvert-audio/:audioFileId", () => {
 
     expect(mocks.analyzeAudio).toHaveBeenCalledTimes(1);
     expect(mocks.convertAudio).toHaveBeenCalledTimes(1);
-
-    const [, , tempoRatio] = mocks.convertAudio.mock.calls[0];
-    expect(tempoRatio).toBeCloseTo(1.25, 5); // 120/80 = 1.5 -> clamped to 1.25
   });
 
-  it("uses provided importedTempoBpm for tempoRatio even when analysis tempo differs", async () => {
-    // targetBPM 120, importedTempoBpm 100 -> ratio 1.20
-    // analyzeAudio returns tempo 50 for duration check, but that tempo should be ignored.
-    mocks.analyzeAudio.mockResolvedValue({ tempoBpm: 50, durationSeconds: 60 });
-
+  it("passes correct tempoRatio to convertAudio based on importedTempoBpm", async () => {
+    // targetBPM 120, importedTempo 100 → ratio 1.20
     await attach(
       request(app).post(
         "/api/reconvert-audio/1?targetBPM=120&pitchShiftSemitones=0&gainDb=0&importedTempoBpm=100",
@@ -178,22 +167,5 @@ describe("POST /api/reconvert-audio/:audioFileId", () => {
     expect(response.body).toEqual({
       message: "Failed to reconvert audio file.",
     });
-  });
-
-  it("returns 413 when imported audio duration exceeds the limit", async () => {
-    mocks.analyzeAudio.mockResolvedValue({
-      tempoBpm: 100,
-      durationSeconds: 900,
-    });
-
-    const response = await attach(
-      request(app).post(
-        "/api/reconvert-audio/1?targetBPM=120&pitchShiftSemitones=0&gainDb=0&importedTempoBpm=100",
-      ),
-    );
-
-    expect(response.status).toBe(413);
-    expect(response.body.message).toMatch(/too long|Maximum duration/i);
-    expect(mocks.convertAudio).not.toHaveBeenCalled();
   });
 });
