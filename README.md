@@ -7,6 +7,7 @@ Express + TypeScript API for SonicDNA audio upload, analysis metadata, and conve
 - Node.js + Express
 - TypeScript
 - Prisma + PostgreSQL
+- Zod request validation
 - Cloudflare R2 (S3-compatible object storage)
 - Python audio processing scripts (`librosa`-based flow in `python/`)
 
@@ -25,6 +26,10 @@ Create a `.env` file in this folder with:
 ```env
 DATABASE_URL=postgresql://user:password@host:5432/dbname
 
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=sound_api
+
 CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 CLOUDFLARE_R2_ACCESS_KEY=<r2-access-key>
 CLOUDFLARE_R2_SECRET_KEY=<r2-secret-key>
@@ -33,13 +38,13 @@ CLOUDFLARE_R2_BUCKET_NAME=<bucket-name>
 
 ## Setup
 
-1. Install dependencies:
+1. Install Node dependencies:
 
 ```bash
 npm install
 ```
 
-2. Install Python dependencies:
+2. Create and install Python environment:
 
 ```bash
 npm run python:venv
@@ -58,6 +63,13 @@ npm run prisma:generate
 npm run prisma:migrate:deploy
 ```
 
+5. (Optional) Validate setup:
+
+```bash
+npm run typecheck
+npm run test
+```
+
 ## Run the Server
 
 Development mode:
@@ -72,7 +84,48 @@ Start mode:
 npm run start
 ```
 
-Default port is `3000`.
+Default port is 3000.
+
+## Docker
+
+This repo includes a production-style Docker setup with:
+
+- `api` service: Node 22 + Python + ffmpeg + Prisma client generation.
+- `db` service: PostgreSQL 16.
+
+Start both services:
+
+```bash
+docker compose up -d --build
+```
+
+Stop services:
+
+```bash
+docker compose down
+```
+
+View API logs:
+
+```bash
+docker compose logs -f api
+```
+
+Run Prisma migrations inside the API container:
+
+```bash
+docker compose exec api npx prisma migrate deploy
+```
+
+You can also use Make shortcuts:
+
+```bash
+make up
+make down
+make logs
+make migrate
+make reset-db
+```
 
 ## Quality Commands
 
@@ -102,6 +155,10 @@ Multipart form-data field:
 
 Uploads source audio, runs analysis, stores metadata in DB, and stores file in R2.
 
+Success response:
+
+- `{ "message": "Audio submitted successfully!" }`
+
 ### Audio Catalog
 
 - `GET /api/get-audio`
@@ -117,6 +174,13 @@ Multipart form-data field:
 - `audio` (target/imported file)
 
 Creates conversion plan from source profile + imported analysis and returns temporary stream URI.
+
+Validation:
+
+- `audioFileId` must be a positive integer.
+- Uploaded file must be one of: MP3, WAV, or M4A-compatible MIME types.
+- Uploaded file size max: 10MB.
+- Imported analysis duration max: 90 seconds.
 
 ### Stream Stored Audio
 
@@ -146,6 +210,14 @@ Query params:
 - `importedTempoBpm` (optional)
 
 Returns new temporary converted stream URI.
+
+Validation:
+
+- `audioFileId` must be a positive integer.
+- Uploaded file must be one of: MP3, WAV, or M4A-compatible MIME types.
+- Uploaded file size max: 10MB.
+- Query params `targetBPM`, `pitchShiftSemitones`, and `gainDb` are required.
+- If `importedTempoBpm` is omitted, tempo is analyzed from the uploaded file.
 
 ## Notes
 
