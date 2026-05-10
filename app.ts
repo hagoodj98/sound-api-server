@@ -86,7 +86,7 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
       await fs.unlink(tempFilePath).catch(() => undefined);
     }
     // After successfully uploading the audio file to Cloudflare R2, we can now store the metadata of the uploaded audio file in the database using Prisma. This includes information such as the original file name, MIME type, storage key, file size, and creation date.
-    const audio = await prisma.audioFile.create({
+    const audioFileRecordPs = await prisma.audioFile.create({
       data: {
         fileName: audioFile.originalname, // Store the original name of the uploaded audio file in the database
         mimeType: audioFile.mimetype, // Store the MIME type of the uploaded audio file in the database
@@ -97,9 +97,9 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
     });
 
     // After successfully uploading the audio file to Cloudflare R2 and storing its metadata in the database, we can now create a sound profile in the database using the analysis results obtained from the Python script. The sound profile will include various attributes such as duration, tempo, estimated pitch, and DNA features extracted from the audio analysis.
-    await prisma.soundProfile.create({
+    const soundProfileRecordPS = await prisma.soundProfile.create({
       data: {
-        audioFileId: audio.id,
+        audioFileId: audioFileRecordPs.id,
         durationSeconds: analysisResults.durationSeconds,
         tempoBpm: analysisResults.tempoBpm,
         estimatedPitchHz: analysisResults.estimatedPitchHz,
@@ -115,8 +115,50 @@ app.post("/api/submit-audio", upload.single("audio"), async (req, res) => {
       },
     });
 
+    const responseSoundProfile: SoundProfile = {
+      audioFileId: "",
+      tempoBpm: 0,
+      estimatedPitchHz: 0,
+      audioName: "",
+      energyLevel: "",
+      tempoLabel: "",
+      tone: "",
+      mood: "",
+    };
+
+    const fileName = audioReferenceKey
+      .split("/")
+      .pop()
+      ?.split("-")
+      .pop()
+      ?.split(".")
+      .shift();
+    if (fileName) {
+      responseSoundProfile.audioName = fileName;
+    }
+    const rmsMean = soundProfileRecordPS.rmsMean;
+    const tempoBpm = Math.floor(soundProfileRecordPS.tempoBpm);
+    const spectralCentroidMean = soundProfileRecordPS.spectralCentroidMean;
+    responseSoundProfile.tempoBpm = tempoBpm;
+    responseSoundProfile.audioName = fileName || "Unknown";
+    responseSoundProfile.estimatedPitchHz =
+      soundProfileRecordPS.estimatedPitchHz;
+    responseSoundProfile.energyLevel = getEnergyLevel(rmsMean);
+    responseSoundProfile.tempoLabel = getTempoLabel(tempoBpm);
+    responseSoundProfile.tone = getToneLabel(spectralCentroidMean);
+    responseSoundProfile.mood = getMoodLabel({
+      tempoBpm,
+      rmsMean,
+      spectralCentroidMean,
+    });
+    responseSoundProfile.audioFileId =
+      soundProfileRecordPS.audioFileId.toString();
+
     // Here you can implement the logic to process the submitted audio URI as needed
-    res.status(200).json({ message: "Audio submitted successfully!" }); // Respond with a success message
+    res.status(200).json({
+      message: "Audio submitted successfully!",
+      soundProfile: responseSoundProfile,
+    }); // Respond with a success message
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Failed to upload audio file." }); // Respond with an error message if the upload fails
@@ -377,7 +419,6 @@ app.get("/api/stream-temp-audio/:filename", async (req, res) => {
     if (!filename || filename.includes("..") || filename.includes("/")) {
       return res.status(400).json({ message: "Invalid filename." });
     }
-
     const tempFilePath = path.join(os.tmpdir(), filename);
 
     // Check if file exists
@@ -397,10 +438,10 @@ app.get("/api/stream-temp-audio/:filename", async (req, res) => {
     const stats = await fs.stat(tempFilePath);
     res.setHeader("Content-Length", stats.size.toString());
 
-    // Stream the temporary audio file to the client
+    // Stream the temporary audio file to the client.
     const fileStream = createReadStream(tempFilePath);
     fileStream.pipe(res);
-
+    // Handle errors during streaming and ensure the response is properly ended in case of an error
     fileStream.on("error", (error: Error) => {
       console.error("Error streaming temp audio:", error);
       if (!res.headersSent) {
